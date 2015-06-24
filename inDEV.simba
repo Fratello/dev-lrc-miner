@@ -1,0 +1,485 @@
+{$DEFINE SMART}
+{$include_once SRL-GLX-master/SRL-GLX-master/Setup.simba}
+
+const SMART_CLIENT_HEIGHT = 600;
+const SMART_CLIENT_WIDTH = 800;
+
+const MID_CLIENT := Point(Floor(SMART_CLIENT_WIDTH / 2), Floor(SMART_CLIENT_HEIGHT / 2));
+
+const BANK_CHOOSE_OPTS := ['Deposit Pulley lift'];
+
+const DEPO_INV_POUCH_TEXTURE_ID = 39780;
+const DEPO_INV_POUCH_TEXTURE_COL_ID = 2766353;
+const DEPO_INV_POUCH_TEXTURE_FULL_COL_ID = 3025423;
+const DEPO_INV_POUCH_TEXTURE_BOUNDS := IntToBox(0,0,27,20);
+// bitmap of depo inv pouch =   Bmp := BitmapFromString(26, 19, 'meJx9lMtKw0AUhl2IoLYJmIXVStWIpd6gtrF4q4oaEcRIvSCIWnAluBDEjYgLcenKB1DwRXwSH8Yv/jAOSSr8DCdn5nz9z1y6tVQ+DGfPouDqOEPdPT1otPVa2n9hHL/4sEVmcPUm77hmfbg4crA5cbpbOd+bSghO73DgTkXiiCksGtq8RwQje48AVbJW9QBGzWJro5SQaPkBv9C8EkE0IFjy6m1+iCkyckhJUPGWZ7ydIClQLEbQYMqGaBDI9I0v5vwtBJbZeKXjzvu5RiXXnMvbEsqrHcVjvS0gBkSjNaa6+srMjkW32oR4WRYNFOXMQtBPU0uGGA7SjpGfvnxCosV70oHGyu3yCYHaoTW1zCgUPhfu3taf3+WNDChqM2lUMSoGqN0m0Ilgjwyurj+/ag/vMWrA/4fmhDkj2cOtAfKpnSQDSrOZpyBC+L2BCORNQN0K3RlqCTgI8sRya9NsjlCmU0k3QUwC3RPEJ6cgGlXQbI5QGNCzMjQdATbMc1CDJMnE7TuuahMoXRIBEzShzMUzR6wbYnNMg+qRbWEsTFYTNJujiycUVZ1oZtNsGh4MhPjvXH5RCZqNMkA9SdGoFdBwbNT/3uyWjbf4odXb7Lk4Ngr1N3rTSgNl0ijNkVbmi/wjpfNpidCJI/0AcZQl6A==');
+
+const ORE_TEXTURE_ID = 104295;
+const ORE_TEXTURE_BOUNDS := IntToBox(0, 0, 36, 32);
+
+const COAL_ORE_TEXTURE_COL_ID = 1380877;
+const COAL_ORE_TEXTURE_FULL_COL_ID = 1314828;
+
+const GOLD_ORE_TEXTURE_COL_ID = 2563853;
+const GOLD_ORE_TEXTURE_FULL_COL_ID = 2432268;
+
+// ----
+
+const SELECTED_ORE_TEXTURE_ID = 113730;
+// note: same bounds apply as un-selected ores.
+
+const SELECTED_COAL_ORE_COL_ID = 3025702;
+const SELECTED_COAL_ORE_FULL_COL_ID = 3157289;
+
+const SELECTED_GOLD_ORE_COL_ID = 4077094;
+const SELECTED_GOLD_ORE_FULL_COL_ID = 4143145;
+
+{
+  All of these tiles are near the deposit area.
+  These tiles should have enough buffer area to provide randomness when banking.
+  These tiles should have the deposit device on screen at all times when
+    fully zoomed out and facing north and the highest (birds eye view) angle.
+}
+const
+  BANK_TILES := [Point(264, 300), Point(264, 296),
+    Point(264, 292), Point(264, 288), Point(260, 288), Point(256, 288),
+    Point(260, 284), Point(264, 284), Point(268, 296), Point(272, 296),
+    Point(268, 292), Point(268, 300), Point(272, 300), Point(272, 296),
+    Point(272, 292), Point(276, 292), Point(276, 296), Point(276, 300)];
+
+{
+  Walk paths of tiles from ore locations to bank,
+    and ore locations to other ore locations.
+  Paths are attempted to use most center of any given path,
+    in order to allow variation during runtime.
+}
+const
+  WALK_PATH_COAL1_TO_BANK := [];
+  WALK_PATH_COAL2_TO_BANK := [];
+  WALK_PATH_COAL3_TO_BANK := [];
+
+  WALK_PATH_GOLD1_TO_BANK := [];
+  WALK_PATH_GOLD2_TO_BANK := [];
+  WALK_PATH_GOLD3_TO_BANK := [];
+
+  WALK_PATH_COAL1_TO_COAL2 := [];
+  WALK_PATH_COAL1_TO_COAL3 := [];
+  WALK_PATH_COAL2_TO_COAL3 := [];
+
+  WALK_PATH_GOLD1_TO_GOLD2 := [];
+  WALK_PATH_GOLD1_TO_GOLD3 := [];
+  WALK_PATH_GOLD2_TO_GOLD3 := [];
+
+// The deposit pully model ID
+const BANK_ID = 1113074985;
+
+{
+const COAL_BAG_TEXTURE_ID = 0;
+const COAL_BAG_TEXTURE_COL_ID = 0;
+const COAL_BAG_TEXTURE_FULL_COL_ID = 0;
+const COAL_BAG_TEXTURE_BOUNDS := IntToBox(0,0,0,0);
+}
+
+// Perhaps ADD all sign of porter ID's
+// Perhaps ADD lava titan/lava golem support
+// Perhaps ADD aura support
+
+var Smart: TSmart;
+
+function equalDimensions(a, b: TBox): Boolean;
+begin
+  Result := ( ( a.X2 - a.X1 = b.X2 - b.X1 ) and ( a.Y2 - a.Y1 = b.Y2 - b.Y1 ) );
+end;
+
+// Determine if the 'BANK OF RUNESCAPE - DEPOSIT BOX' interface screen is open.
+function GL_DepositBoxScreen(): Boolean;
+begin
+  // Perhaps cache the bounds/dimensions of the deposit screen bounds.
+  Result := Length( glGetTextures( DEPO_INV_POUCH_TEXTURE_ID ) ) = 1;
+end;
+
+function GL_DepositBoxInvBounds(): TBox;
+//[{ID = 57120, COLOURID = 1517102, FULLCOLOURID = 1517358, X = 224, Y = 170, BOUNDS = {X1 = 220, Y1 = 150, X2 = 228, Y2 = 190}}, {ID = 57120, COLOURID = 1517102, FULLCOLOURID = 1517358, X = 592, Y = 170, BOUNDS = {X1 = 588, Y1 = 150, X2 = 596, Y2 = 190}}]
+//[{ID = 13293, COLOURID = 1451052, FULLCOLOURID = 1451052, X = 224, Y = 430, BOUNDS = {X1 = 220, Y1 = 426, X2 = 228, Y2 = 434}}, {ID = 13293, COLOURID = 1451052, FULLCOLOURID = 1451052, X = 592, Y = 430, BOUNDS = {X1 = 588, Y1 = 426, X2 = 596, Y2 = 434}}]
+var i : Integer;
+var slots: glTextureArray;
+begin
+  result := inttobox(high(integeR),high(integer),-1,-1);
+  slots := glGetTextures(57120); // Top L and Top R
+  if ( Length( slots ) <> 2 ) then
+  begin
+    WriteLn('Need to do better id or filtering...A');
+    //TerminateScript;
+     Exit;
+  end;
+  if ( slots[0].Bounds.X1 < slots[1].Bounds.X1 ) then
+    Result.X1 := slots[0].Bounds.X1
+  else
+    Result.X1 := slots[1].Bounds.X1;
+  Result.Y1 := slots[0].Bounds.Y1; // Both Y's are same value. So index 0 or 1 both work same.
+
+  slots := glGetTextures(13293); // Bottom L and Bottom R
+  if ( Length( slots ) <> 2 ) then
+  begin
+    WriteLn('Need to do better id or filtering...B');
+    //TerminateScript;
+     Exit;
+  end;
+  if ( slots[0].Bounds.X2 > slots[1].Bounds.X2 ) then
+    Result.X2 := slots[0].Bounds.X2
+  else
+    Result.X2 := slots[1].Bounds.X2;
+  Result.Y2 := slots[0].Bounds.Y2; // Both Y's are same value. So index 0 or 1 both work same.
+end;
+
+function invFullChatBoxPopUp(): Boolean;
+const BTN_ID = 142800;
+const BTN_COL_ID = 7360796;
+const BTN_FULL_COL_ID = 9993265;
+const BTN_BOUNDS := IntToBox(0, 0, 80, 19);
+var i:Integer;
+//var b:tbox;
+var arr: glTextureArray;
+begin
+  arr := glGetTextures(BTN_ID, GL_DepositBoxInvBounds);
+  if ( Length(arr) < 1 ) then
+  begin
+    WriteLn('could not find');
+    Exit;
+  end;
+
+  for i := 0 to high(arr) do
+  begin
+    if (equalDimensions(arr[i].Bounds,inttobox(0,0,80,19))) then
+    begin
+      Result := True;
+      //b:=arr[i].bounds;
+      //smart.__Graphics.DrawBox(b.x1, b.y1, b.x2, b.y2);
+      Break;
+    end;
+  end;
+
+end;
+
+
+function GL_DepositBoxCountItem(itemTextureID, itemColID, tol: Integer): Integer;
+var i, count: Integer;
+
+var depoBox: TBox;
+
+var candidates: glTextureArray;
+begin
+  Result := -1;
+  if ( not ( GL_DepositBoxScreen() ) ) then
+  begin
+    Exit;
+  end;
+
+  // should've been cached into global variable instead!!!
+  depoBox := GL_DepositBoxInvBounds();
+
+  candidates := glGetTextures(itemTextureID, itemColID, tol, depoBox);
+
+  count := 0;
+
+  for i := 0 to high(candidates) do
+  begin
+    if ( equalDimensions( candidates[i].Bounds, ORE_TEXTURE_BOUNDS ) ) then
+    begin
+      count := count + 1;
+    end;
+  end;
+
+  Result := count;
+end;
+
+function openDepositScreen(): Boolean;
+var cx, cy, i, dist, bestDist, bestIndex: Integer;
+var arr: glModelArray;
+begin
+  Result := False;
+  if ( GL_DepositBoxScreen() ) then
+  begin
+    Result := True;
+    Exit;
+  end;
+  arr := glGetModels( BANK_ID );
+  if ( Length( arr ) < 1 ) then
+  begin
+    WriteLn('openDepositScreen() could not find bank model ID');
+    Exit;
+  end;
+  if ( Length( arr ) = 1 ) then
+  begin
+    Mouse(arr[0].X, arr[0].Y, Random(-20, 20), Random(-20, 20), Mouse_Right);
+    GL_ChooseOption(BANK_CHOOSE_OPTS, Mouse_Left);
+  end;//shouldn't need to account for more than 1.... should be unique!
+  { else
+  begin
+    bestDist := High(Integer);
+    for i := 0 to High(arr) do
+    begin
+      dist := Distance(MID_CLIENT.X, MID_CLIENT.Y, arr[i].X, arr[i].Y);
+      if (dist < bestDist) then
+      begin
+        bestDist := dist;
+        bestIndex := i;
+      end;
+    end;
+    Mouse(arr[0].X, arr[0].Y, Random(-20, 20), Random(-20, 20), Mouse_Right);
+    GL_ChooseOption(BANK_CHOOSE_OPTS, Mouse_Left);
+  end;}
+  i := GetSystemTime() + Random(4000, 8000);
+  while ( getSystemTime() < i ) do
+  begin
+    Result := GL_DepositBoxScreen();
+    if ( Result ) then
+      Break;
+    Wait( 40 + Random( 40 ) );
+  end;
+end;
+
+// The deposit screen for when you select an item then click the deposit pully.
+// Appears in the chat - box area to select how many items to deposit (of
+//   the given selected item used in the first place).
+function quickDepositScreen(): Boolean;
+const depo_quant = 65800; // the options with amounts to quickly deposit that shows up within the chat box,
+// note: the amount varies => ex. only 2 appear when have 2 items, more for more , etc.
+//       BUT, nothing at all appears for 1 item, so count based off of the invent instead.
+var b:tbox;
+begin
+  Result := False;
+  // Cache the bounds for the chat box area too?
+  // or maybe not because the same exact id's find the chat + deposit screen
+  //  ( wouldnt want to use 1 box for 2 diff boxes locations/bounds)
+  b := GL_DepositBoxInvBounds();
+  Result := Length(glGetTextures(depo_quant, b)) >= 2;
+end;
+
+{*
+  Returns a glTextArray containing the Options when an object, interface or item is right-clicked.
+  Also returns the Bounding-Box of the right-click interface.
+
+  Developer Info:
+    14418      - TextureID of the top corners of the right-click interface.
+    1120799   - ColourID of the top corners of the right-click interface.
+    15878      - TextureID of the bottom corners of the right-click interface.
+    1647401  - ColourID of the bottom corners of the right-click interface.
+*}
+Function GL_GetChooseOptions2( var menubounds:tbox): glTextArray;
+var
+  TL, LR: glTextureArray;
+Begin
+  TL := glGetTextures(14418, 1120799, 5);
+  LR := glGetTextures(15878, 1647401, 5);
+
+  If ((Length(TL) < 1) Or (Length(LR) < 1)) Then
+  begin
+    WriteLn('GL_GetChooseOptions: length err');
+    Exit;
+  end;
+  MenuBounds := IntToBox(TL[0].Bounds.X1, TL[0].Bounds.Y2, LR[1].Bounds.X2, LR[1].Bounds.Y2);
+  Result := glCharsToTexts(glGetChars(MenuBounds), 5, 7);
+End;
+
+function openQuickDepositScreen(): Boolean;
+
+var t, t2, choosenItemIndex: Integer;
+
+var cx, cy, i, dist, bestDist, bestIndex: Integer;
+var arr: glModelArray;
+var z: glTextureArray;
+begin
+  Result := False;
+  if ( quickDepositScreen() ) then
+  begin
+    Result := True;
+    Exit;
+  end;
+
+  t := getSystemTime() + Random(12000, 24000);
+  while ( getSystemTime() < t ) do
+  begin
+
+    z := glGetTextures(ORE_TEXTURE_ID, GL_InvBounds());
+    if ( Length( z ) < 1 ) then
+    begin
+      WriteLn('not enough z');
+      Exit;
+    end;
+
+    choosenItemIndex := Random(0, High(z));
+
+    Mouse(z[choosenItemIndex].X,
+          z[choosenItemIndex].Y, Random(-10, 10), Random(-10, 10), Mouse_Left);
+
+    t2 := getSystemTime() + Random(4000, 8000);
+    while ( getSystemTime() < t2 ) do
+    begin
+      Wait(40 + RAndom(40));
+      if ( Length( glGetTextures( SELECTED_ORE_TEXTURE_ID, GL_InvBounds() ) ) = 1 ) then
+      begin
+        WriteLn('Success at selecting an ore item from inventory.');
+        Break;
+      end;
+          Mouse(z[choosenItemIndex].X,
+          z[choosenItemIndex].Y, Random(-10, 10), Random(-10, 10), Mouse_Left);
+    end;
+
+    arr := glGetModels( BANK_ID );
+    if ( Length( arr ) <> 1 ) then
+    begin
+      WriteLn('Could not find and click a bank ID on the main screen...');
+      Exit;
+    end;
+
+    Mouse(arr[0].X, arr[0].Y, Random(-20, 20), Random(-20, 20), Mouse_Right);
+
+    GL_ChooseOption(['UseCoal->Pulleylift',
+                         'UseGoldore->Pulleylift',
+                         'Use Coal -> Pulley lift',
+                         'Use Gold ore -> Pulley lift'], Mouse_Left);
+
+    t2 := GetSystemTime() + Random(4000, 8000);
+    while ( getSystemTime() < t2 ) do
+    begin
+      Result := quickDepositScreen();
+      if ( Result ) then
+        Break;
+      Wait( 40 + Random( 40 ) );
+    end;
+
+    Result := quickDepositScreen();
+
+    if ( Result ) then
+      Break;
+
+  end;
+end;
+
+// Determines if the deposit screen or the quick deposit screen is present.
+// Will deposit items if either screen is open.
+// so a PRE-CONDITION = one of the interfaces to deposit with must already be present for this method to work
+procedure depositLoot();
+const depo_quant = 65800;
+var t, itemCount, i, currY, bestIdx: Integer;
+var arr: glTextureArray;
+begin
+  if ( quickDepositScreen() ) then
+  begin
+    WriteLn('Attempting to deposit items with selecting a number that correlates to chat quick deposit screen.');
+    // test with 1 item in inv, up to 5, then a whole inv.
+    arr := glgettextures(depo_quant, GL_DepositBoxInvBounds());
+    if ( Length( arr ) = 0 ) then
+    begin
+      WriteLn('nothing gathered, so somethings up, recode or review logic here.');
+      Exit;
+    end;
+
+   if ( Random(2) = 1 ) then
+    begin
+      // Mouse option
+      currY := 0;
+      bestIdx := 0;
+      for i := 0 to high(arr) do
+      begin
+        if (arr[i].Bounds.Y1 > currY) then
+        begin
+          currY := arr[i].Bounds.Y1;
+          bestIdx := i;
+        end;
+      end;
+      Mouse(arr[bestIdx].X, arr[bestIdx].Y, Random(-5, 5), Random(-5, 5), Mouse_Left);
+      t := GetSystemTime() + Random(5000, 7500);
+      while ( GetSystemTime() < t ) do
+      begin
+        if ( not ( quickDepositScreen ) ) then
+        begin
+          WriteLn('quick depo chat box dissappeared. A');
+          Break;
+        end;
+      end;
+    end else
+    begin
+      // Key option
+      t := GetSystemTime() + Random(5000, 7500);
+      while ( GetSystemTime() < t ) do
+      begin
+        TypeSend(toString(Length(arr)), False);
+        Wait( 40 + Random( 40 ) );
+        if ( not ( quickDepositScreen ) ) then
+        begin
+          WriteLn('quick depo chat box dissappeared. B');
+          Break;
+        end;
+      end;
+    end;
+
+  end else if ( GL_DepositBoxScreen() ) then
+  begin
+    WriteLn('Attempting to deposit items in the detected Deposit Box screen.');
+    itemCount :=
+      GL_DepositBoxCountItem(
+        ORE_TEXTURE_ID, GOLD_ORE_TEXTURE_COL_ID, 10
+      );
+
+    t := GetSystemTime() + Random(5000, 7500);
+    while ( GetSystemTime() < t ) do
+    begin
+      // Get Inv Item count...
+      // compare to a count taken before this loop..
+      // Break if the amount taken here is less than the amount taken prior to this loop, as that tells us we deposited items!
+      if (
+      GL_DepositBoxCountItem(ORE_TEXTURE_ID, GOLD_ORE_TEXTURE_COL_ID, 10)
+      <
+      itemCount
+      ) then
+      begin
+        WriteLn('Item count of held items decreased;');
+        Break;
+      end;
+
+      // Click the deposit button
+      arr := glGetTextures(DEPO_INV_POUCH_TEXTURE_ID);
+      if ( Length( arr ) <> 1 ) then
+      begin
+        WriteLn('No deposit button found... Awk Err.');
+      end;
+      Mouse(arr[0].X, arr[0].Y, Random(-5, 5), Random(-5, 5), Mouse_Left);
+      // wait for items to dissappear from deposit box screen.
+      Wait( 40 + Random(40) );
+    end;
+  end else
+  begin
+    WriteLn('Could not find a deposit screen to deposit loot.');
+  end;
+end;
+
+procedure handleState();
+begin
+end;
+
+procedure loop();
+begin
+  while ( True ) do
+  begin
+    handleState();
+  end;
+end;
+
+var b:tbox;
+
+begin
+  UseSysCache := True;
+  SetupGLX(Smart, SMART_CLIENT_WIDTH, SMART_CLIENT_HEIGHT);
+  if ( not ( GL_LoggedIn() ) ) then
+    TerminateScript;
+  ClearDebug();
+  //GLDebug(1, 0, 0, 0, 0, 0, 0, Smart.Width, Smart.Height);
+  openQuickDepositScreen();
+  //openDepositBox();
+  depositLoot();
+  //b:=inttobox(585,314,621,346);
+  //smart.__Graphics.DrawBox(b.x1, b.y1, b.x2, b.y2);
+  //loop();
+end.
