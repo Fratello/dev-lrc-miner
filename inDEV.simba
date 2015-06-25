@@ -1,6 +1,10 @@
 {$DEFINE SMART}
 {$include_once SRL-GLX-master/SRL-GLX-master/Setup.simba}
 
+////////
+// Note:
+// ==> If tile coords change, switch script to use relative space/dist from known objects.
+
 const
   SMART_CLIENT_WIDTH  = 800; // X-Axis, Horizontal
   SMART_CLIENT_HEIGHT = 600; // Y-Axis, Vertical
@@ -10,7 +14,16 @@ const
   MID_CLIENT := Point(Floor(SMART_CLIENT_WIDTH / 2), Floor(SMART_CLIENT_HEIGHT / 2));
 
 const
+  KEEP_AND_BANK_ORE = True;
+
+// Select what is to be mined (either coal, gold, or both)
+const
+  MINE_COAL = True;
+  MINE_GOLD_ORE = True;
+
+const
   BANK_ID = 1113074985; // The deposit pully model ID
+  BANK_MM_SYM = 0;
   BANK_CHOOSE_OPTS := ['Deposit Pulley lift'];
   BANK_USE_ORE_OPTS := ['UseCoal->Pulleylift', 'UseGoldore->Pulleylift',
                         'Use Coal -> Pulley lift', 'Use Gold ore -> Pulley lift'];
@@ -61,27 +74,73 @@ const
     Point(272, 292), Point(276, 292), Point(276, 296), Point(276, 300)];
 
 {
+  These are the tiles that represent an ore location. Thus, standing on one
+  of these tiles, at their respective locations, will determine if the local
+  position is at any given ore location.
+  ( Generally should be ~2 tiles away from the ore location itself. )
+}
+const
+  ORE_LOCATIONS := [
+    [Point(0, 0)],
+    [Point(0, 0)],
+    [Point(0, 0)],
+    [Point(0, 0)],
+    [Point(0, 0)],
+    [Point(0, 0)]
+  ];
+  COAL_LOC_1 = 0;
+  COAL_LOC_2 = 1;
+  COAL_LOC_3 = 2;
+
+  GOLD_LOC_1 = 3;
+  GOLD_LOC_2 = 4;
+  GOLD_LOC_3 = 5;
+
+{
   Walk paths of tiles from ore locations to bank,
     and ore locations to other ore locations.
   Paths are attempted to use most center of any given path,
     in order to allow variation during runtime.
 }
 const
-  WALK_PATH_COAL1_TO_BANK := [];
-  WALK_PATH_COAL2_TO_BANK := [];
-  WALK_PATH_COAL3_TO_BANK := [];
 
-  WALK_PATH_GOLD1_TO_BANK := [];
-  WALK_PATH_GOLD2_TO_BANK := [];
-  WALK_PATH_GOLD3_TO_BANK := [];
+  WALK_PATH_COAL1_TO_BANK := [Point(0, 0)];
+  WALK_PATH_COAL2_TO_BANK := [Point(0, 0)];
+  WALK_PATH_COAL3_TO_BANK := [Point(0, 0)];
 
-  WALK_PATH_COAL1_TO_COAL2 := [];
-  WALK_PATH_COAL1_TO_COAL3 := [];
-  WALK_PATH_COAL2_TO_COAL3 := [];
+  WALK_PATH_GOLD1_TO_BANK := [Point(0, 0)];
+  WALK_PATH_GOLD2_TO_BANK := [Point(0, 0)];
+  WALK_PATH_GOLD3_TO_BANK := [Point(0, 0)];
 
-  WALK_PATH_GOLD1_TO_GOLD2 := [];
-  WALK_PATH_GOLD1_TO_GOLD3 := [];
-  WALK_PATH_GOLD2_TO_GOLD3 := [];
+  // Walks from given indexed pos to bank.
+  WALK_TO_BANK := [
+    WALK_PATH_COAL1_TO_BANK,
+    WALK_PATH_COAL2_TO_BANK,
+    WALK_PATH_COAL3_TO_BANK,
+    WALK_PATH_GOLD1_TO_BANK,
+    WALK_PATH_GOLD2_TO_BANK,
+    WALK_PATH_GOLD3_TO_BANK
+  ];
+
+  WALK_PATH_COAL1_TO_COAL2 := [Point(0, 0)];
+  WALK_PATH_COAL1_TO_COAL3 := [Point(0, 0)];
+  WALK_PATH_COAL2_TO_COAL3 := [Point(0, 0)];
+
+  WALK_PATH_GOLD1_TO_GOLD2 := [Point(0, 0)];
+  WALK_PATH_GOLD1_TO_GOLD3 := [Point(0, 0)];
+  WALK_PATH_GOLD2_TO_GOLD3 := [Point(0, 0)];
+
+type TOre = (COAL, GOLD);
+
+type Node = ^CircQ
+CircQ = record
+  ore: TOre; // The ore type at this location
+  num: Integer; // The numer in the linked list this ore has ( will correlate to Map Coord points )
+  next: Node;
+end;
+
+var
+  head, tail, currTarget: Node;
 
 {
 const COAL_BAG_TEXTURE_ID = 0;
@@ -124,6 +183,62 @@ Example:
 function equalDimensions(a, b: TBox): Boolean;
 begin
   Result := ( ( a.X2 - a.X1 = b.X2 - b.X1 ) and ( a.Y2 - a.Y1 = b.Y2 - b.Y1 ) );
+end;
+
+procedure Insert(oreType: TOre; index: Integer);
+var n: Node;
+begin
+  new( n );
+  n^.ore := oreType;
+  n^.num := index;
+  n^.next := nil;
+  if ( head = nil ) then
+    head := n
+  else
+    tail^.next := n;
+  tail := n;
+end;
+
+procedure buildList();
+begin
+  head := nil;
+
+  if ( MINE_COAL ) then
+  begin
+    Insert(TOre.COAL, COAL_LOC_1);
+    Insert(TOre.COAL, COAL_LOC_2);
+    Insert(TOre.COAL, COAL_LOC_3);
+  end;
+
+  if ( MINE_GOLD_ORE ) then
+  begin
+    Insert(TOre.GOLD, GOLD_LOC_1);
+    Insert(TOre.GOLD, GOLD_LOC_2);
+    Insert(TOre.GOLD, GOLD_LOC_3);
+  end;
+
+  tail^.next := head; // Make it circular
+
+  currTarget := head; // Set the [current] target mining spot.
+end;
+
+Function LocalPosToMM(Pos: TPoint): TPoint;
+var
+  Me: TPoint;
+  DX, DY: Integer;
+Begin
+  Me := GL_GetLocalPos();
+  DX := Pos.X - Me.X;
+  DY := Pos.Y - Me.Y;
+
+  Me := MiddleBox(GL_MMBounds);
+  Result.X := Me.X + DX;
+  Result.Y := Me.Y + DY;
+End;
+
+function isBankModelOnScreen(): Boolean;
+begin
+  Result := Length(glGetModels(BANK_ID)) = 1;
 end;
 
 (*
@@ -329,6 +444,10 @@ begin
   end;
 
   Result := count;
+end;
+
+function GL_GetCountDepositBox(): Integer;
+begin
 end;
 
 (*
@@ -607,16 +726,228 @@ begin
   end;
 end;
 
+(*
+isStandingOnBankTiles
+~~~~~~~~~~
+
+.. code-block:: pascal
+
+    function isStandingOnBankTiles(): Boolean;
+
+Returns true if the characters position is matching that of a bank tile.
+
+.. note::
+
+    - by Le Jingle
+    - Last Updated: none
+
+Example:
+
+.. code-block:: pascal
+
+    if ( isStandingOnBankTiles() ) then
+    begin
+      WriteLn('standing on bank tiles, should deposit now?');
+    end;
+
+*)
+function isStandingOnBankTiles(): Boolean;
+var i: Integer;
+var currPos: TPoint;
+begin
+  Result := False;
+  for i := 0 to High( BANK_TILES ) do
+  begin
+    currPos := GL_GetLocalPos();
+    if ( ( currPos.X = BANK_TILES[i].X ) and ( currPos.Y = BANK_TILES[i].Y ) ) then
+    begin
+      Result := True;
+      Break;
+    end;
+  end;
+end;
+
+function isStandingOnMiningSpotTiles(): Boolean;
+var i: Integer;
+var currPos, okPos: TPoint;
+begin
+  Result := False;
+  for i := 0 to High( ORE_LOCATIONS[currTarget^.num] ) do
+  begin
+    currPos := GL_GetLocalPos();
+    okPos := ORE_LOCATIONS[currTarget^.num][i];
+    if ( ( currPos.X = okPos.X ) and ( currPos.Y = okPos.Y ) ) then
+    begin
+      Result := True;
+      Break;
+    end;
+  end;
+end;
+
+function isWithinTwoSpaces(currPt, destPt: TPoint): Boolean;
+var b: TBox;
+begin
+  b := IntToBox(destPt.X - 8, destPt.Y - 8, destPt.X + 8, destPt.Y + 8);
+  Result := PointInBox(currPt, b);
+end;
+
+function walkToBank(): Boolean;
+var i, t: Integer;
+var pt, currPos, moveToSpot: TPoint;
+var arr: glTextureArray;
+begin
+  Result := False;
+  for i := 0 to High( WALK_TO_BANK[currTarget^.num] ) do
+  begin
+    moveToSpot := WALK_TO_BANK[currTarget^.num][i];
+    pt := LocalPosToMM(moveToSpot);
+    Mouse(pt.X, pt.Y, Random(-4, 4), Random(-4, 4), Mouse_Left);
+    t := getSystemTime() + Random(16000, 32000);
+    while ( getSystemTime() < t ) do
+    begin
+      if ( isWithinTwoSpaces( GL_GetLocalPos(), moveToSpot ) ) then
+      begin
+        Break;
+      end;
+      Wait( 40 + Random( 40 ) );
+    end;
+  end;
+  if ( not ( isBankModelOnScreen() ) ) then
+  begin
+    // if ( GL_MMContainsSymbol(MM_BANK_SYM); ) then...
+    // get coords for mm bank symbol, wait and walk to it
+    arr := glGetTextures(BANK_MM_SYM, GL_MMBounds());
+    if ( Length( arr ) < 1 ) then
+    begin
+      WriteLn('Could not find the mini-map symbol.');
+      Exit;
+    end;
+    t := getSystemTime() + Random(12000, 24000);
+    while ( getSystemTime() < t ) do
+    begin
+      if ( isBankModelOnScreen() ) then
+      begin
+        Break;
+      end;
+      Wait( 40 + Random( 40 ) );
+    end;
+  end;
+  Result := isBankModelOnScreen();
+end;
+
+function heal(): Boolean;
+var t: Integer;
+begin
+  if ( not ( isStandingOnBankTiles() ) ) then
+  begin
+    Exit;
+  end;
+  t := getSystemTime() + Random(300000, 600000); // 5-10 minues rest period
+  while ( getSystemTime() < t ) do
+  begin
+    if ( TActionBar.GetHP() >= Floor(TActionBar.GetMaxHP() * Random(70,80) / 100 ) ) then
+    begin
+      Result := True;
+      Break;
+    end;
+    Wait( 1000 + Random( 1000 ) );
+  end;
+end;
+
 procedure handleState();
 begin
+
+  if ( TActionBar.GetHP() < Floor(TActionBar.GetMaxHP() / 2) ) then
+  begin
+
+    if ( walkToBank() ) then
+    begin
+      WriteLn('walked to bank');
+      if ( heal() ) then
+      begin
+        WriteLn('healed1');
+      end else
+      begin
+        WriteLn('could not heal1');
+      end;
+    end else
+    begin
+      WriteLn('could not walk to bank..');
+    end;
+
+  end else if ( isStandingOnBankTiles() ) then
+  begin
+
+    if ( TActionBar.GetHP() < Floor(TActionBar.GetMaxHP() / 2) ) then
+    begin
+      if ( heal() ) then
+      begin
+        WriteLn('healed2');
+      end else
+      begin
+        WriteLn('could not heal2');
+      end;
+    end;
+
+    // if inventory has items, then deposit
+    if ( Random(2) = 1 ) then
+    begin
+      if ( not ( openDepositScreen() ) ) then
+        openQuickDepositScreen();
+    end else
+    begin
+      if ( not ( openQuickDepositScreen() ) ) then
+        openDepositScreen();
+    end;
+
+    depositLoot();
+
+  end else if ( GL_DepositBoxScreen() ) or ( quickDepositScreen() ) then  // Currently in the deposit screen, so handle this.
+  begin
+
+    depositLoot();
+
+  end else if ( isStandingOnMiningSpotTiles() ) then
+  begin
+
+    // is inv full? yes=walk and bank and exit this (dont proceed in script here)
+    // else
+    // is there ore there? yes=mine
+    // else
+    // walk to next loc for ore, advance ptr.
+
+  end else
+  begin
+
+    // if [ between routes, walk to currently pointed route ]
+    //   1. if somehow broke/lagged to become inbetween routes, then attempt to walk to the needed spot
+
+  end;
+  // Add Death Check
+  // Add Treasure hunter keys check
+  //  -> possible use them too?
+
+
+
 end;
 
 procedure loop();
 begin
+
+  {
+  WriteLn( n^.value );
+    n := n^.next; // advance pointer
+  }
   while ( True ) do
   begin
     handleState();
   end;
+end;
+
+procedure init();
+begin
+  ClearDebug();
+  buildList();
 end;
 
 var b:tbox;
@@ -626,9 +957,6 @@ begin
   SetupGLX(Smart, SMART_CLIENT_WIDTH, SMART_CLIENT_HEIGHT);
   if ( not ( GL_LoggedIn() ) ) then
     TerminateScript;
-  ClearDebug();
-
-
 
   //GLDebug(1, 0, 0, 0, 0, 0, 0, Smart.Width, Smart.Height);
   //smart.__Graphics.DrawBox(b.x1, b.y1, b.x2, b.y2);
